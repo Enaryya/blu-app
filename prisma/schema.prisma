@@ -1,0 +1,292 @@
+// This file defines the entire Blu database structure.
+// Prisma reads this file to create your database tables and generate TypeScript types.
+// After editing this file, run: npx prisma migrate dev --name <description>
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums (predefined value lists) ───────────────────────────────────────────
+
+enum Role {
+  CLIENT  // A person who posts jobs and hires workers
+  WORKER  // A tradesperson who bids on and completes jobs
+  ADMIN   // Blu platform administrator
+}
+
+enum VerificationLevel {
+  BASIC         // Phone + Ghana Card + 3 portfolio photos
+  CERTIFIED_PRO // Basic + trade certificate (NVTI/COTVET) approved by admin
+  TOP_RATED     // Certified Pro + 20 jobs + 4.5+ rating (auto-promoted)
+}
+
+enum AvailabilityStatus {
+  AVAILABLE
+  BUSY
+  OFFLINE
+}
+
+enum JobStatus {
+  POSTED      // Client posted, waiting for quotes
+  QUOTING     // Quotes received, client reviewing
+  BOOKED      // Quote accepted, payment made, work not started
+  IN_PROGRESS // Worker has started
+  COMPLETED   // Worker marked done
+  DISPUTED    // Client raised a dispute
+  CANCELLED   // Job was cancelled
+}
+
+enum Urgency {
+  EMERGENCY  // Needs fixing today
+  THIS_WEEK
+  FLEXIBLE
+}
+
+enum QuoteStatus {
+  PENDING   // Waiting for client decision
+  ACCEPTED  // Client accepted this quote
+  REJECTED  // Client rejected (or accepted another)
+  EXPIRED   // 48 hours passed without decision
+}
+
+enum PaymentStructure {
+  SINGLE     // One payment at the end
+  MILESTONE  // Paid in stages as milestones are completed
+}
+
+enum MilestoneStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED  // Worker marked done
+  APPROVED   // Client approved (payment released)
+  DISPUTED
+}
+
+enum EscrowStatus {
+  HELD               // Money sitting in escrow
+  PARTIALLY_RELEASED // Some milestones paid out
+  RELEASED           // All money paid to worker
+  REFUNDED           // Money returned to client
+  DISPUTED
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  MOMO_MTN
+  MOMO_VODAFONE
+  MOMO_AIRTELTIGO
+  CARD
+}
+
+// ─── Models (database tables) ─────────────────────────────────────────────────
+
+model User {
+  id                  String   @id @default(uuid())
+  phoneNumber         String   @unique
+  name                String
+  email               String?
+  role                Role
+  profilePhotoUrl     String?
+  locationLat         Float?
+  locationLng         Float?
+  locationDescription String?
+  isActive            Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  // Relations: one user can have many of these
+  workerProfile        WorkerProfile?
+  jobsAsClient         Job[]           @relation("ClientJobs")
+  jobsAsWorker         Job[]           @relation("WorkerJobs")
+  quotesAsWorker       Quote[]
+  bookingsAsClient     Booking[]       @relation("ClientBookings")
+  bookingsAsWorker     Booking[]       @relation("WorkerBookings")
+  reviewsGiven         Review[]        @relation("ReviewerReviews")
+  reviewsReceived      Review[]        @relation("ReviewedReviews")
+  portfolioItems       PortfolioItem[]
+  sentMessages         Message[]
+  transactionsAsPayer  Transaction[]   @relation("PayerTransactions")
+  transactionsAsPayee  Transaction[]   @relation("PayeeTransactions")
+}
+
+model WorkerProfile {
+  id                   String             @id @default(uuid())
+  userId               String             @unique
+  user                 User               @relation(fields: [userId], references: [id])
+  tradeCategories      String[]           // e.g. ["PLUMBER", "TILER"]
+  yearsExperience      Int
+  bio                  String?
+  serviceRadiusKm      Int                @default(15)
+  verificationLevel    VerificationLevel  @default(BASIC)
+  governmentIdType     String?            // e.g. "GHANA_CARD"
+  governmentIdUrl      String?            // Cloudinary URL
+  governmentIdVerified Boolean            @default(false)
+  tradeCertificateUrl  String?
+  averageRating        Float              @default(0)
+  totalCompletedJobs   Int                @default(0)
+  availabilityStatus   AvailabilityStatus @default(AVAILABLE)
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+}
+
+model Job {
+  id                  String    @id @default(uuid())
+  clientId            String
+  client              User      @relation("ClientJobs", fields: [clientId], references: [id])
+  title               String
+  description         String
+  category            String
+  photos              String[]  // Cloudinary URLs
+  locationLat         Float
+  locationLng         Float
+  locationDescription String
+  urgency             Urgency
+  budgetMin           Float?
+  budgetMax           Float?
+  status              JobStatus @default(POSTED)
+  assignedWorkerId    String?
+  assignedWorker      User?     @relation("WorkerJobs", fields: [assignedWorkerId], references: [id])
+  createdAt           DateTime  @default(now())
+  completedAt         DateTime?
+
+  quotes        Quote[]
+  bookings      Booking[]
+  conversations Conversation[]
+}
+
+model Quote {
+  id                    String           @id @default(uuid())
+  jobId                 String
+  job                   Job              @relation(fields: [jobId], references: [id])
+  workerId              String
+  worker                User             @relation(fields: [workerId], references: [id])
+  amount                Float
+  estimatedDurationDays Int
+  message               String?
+  paymentStructure      PaymentStructure @default(SINGLE)
+  upfrontPercentage     Int              @default(0) // Only for TOP_RATED, max 30%
+  status                QuoteStatus      @default(PENDING)
+  createdAt             DateTime         @default(now())
+  expiresAt             DateTime         // 48 hours after creation
+
+  milestones Milestone[]
+  booking    Booking?
+}
+
+model Milestone {
+  id          String          @id @default(uuid())
+  quoteId     String
+  quote       Quote           @relation(fields: [quoteId], references: [id])
+  title       String
+  description String?
+  amount      Float
+  orderIndex  Int             // 1, 2, 3... defines the sequence
+  status      MilestoneStatus @default(PENDING)
+  proofPhotos String[]        // Worker uploads these to prove completion
+  completedAt DateTime?
+  approvedAt  DateTime?
+
+  transactions Transaction[]
+}
+
+model Booking {
+  id               String       @id @default(uuid())
+  jobId            String
+  job              Job          @relation(fields: [jobId], references: [id])
+  quoteId          String       @unique
+  quote            Quote        @relation(fields: [quoteId], references: [id])
+  clientId         String
+  client           User         @relation("ClientBookings", fields: [clientId], references: [id])
+  workerId         String
+  worker           User         @relation("WorkerBookings", fields: [workerId], references: [id])
+  totalAmount      Float        // Full job price
+  commissionAmount Float        // 10% kept by Blu
+  escrowStatus     EscrowStatus @default(HELD)
+  paymentReference String?      // Paystack reference
+  scheduledDate    DateTime?
+  completionDate   DateTime?
+  clientConfirmed  Boolean      @default(false)
+  autoReleaseAt    DateTime?    // 72 hours after worker marks complete
+  createdAt        DateTime     @default(now())
+
+  reviews      Review[]
+  transactions Transaction[]
+}
+
+model Review {
+  id             String   @id @default(uuid())
+  bookingId      String
+  booking        Booking  @relation(fields: [bookingId], references: [id])
+  reviewerId     String
+  reviewer       User     @relation("ReviewerReviews", fields: [reviewerId], references: [id])
+  reviewedUserId String
+  reviewedUser   User     @relation("ReviewedReviews", fields: [reviewedUserId], references: [id])
+  rating         Int      // 1–5 stars
+  comment        String?
+  photos         String[]
+  createdAt      DateTime @default(now())
+}
+
+model PortfolioItem {
+  id           String   @id @default(uuid())
+  workerId     String
+  worker       User     @relation(fields: [workerId], references: [id])
+  title        String
+  description  String?
+  category     String
+  beforePhotos String[]
+  afterPhotos  String[]
+  createdAt    DateTime @default(now())
+}
+
+model Conversation {
+  id             String    @id @default(uuid())
+  jobId          String
+  job            Job       @relation(fields: [jobId], references: [id])
+  participantIds String[]  // Array of User IDs
+  lastMessageAt  DateTime?
+  createdAt      DateTime  @default(now())
+
+  messages Message[]
+}
+
+model Message {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+  senderId       String
+  sender         User         @relation(fields: [senderId], references: [id])
+  content        String
+  mediaUrl       String?
+  isRead         Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+}
+
+model Transaction {
+  id                String            @id @default(uuid())
+  bookingId         String
+  booking           Booking           @relation(fields: [bookingId], references: [id])
+  milestoneId       String?
+  milestone         Milestone?        @relation(fields: [milestoneId], references: [id])
+  amount            Float
+  commissionAmount  Float             // 10% of amount
+  paymentMethod     PaymentMethod
+  paystackReference String
+  status            TransactionStatus @default(PENDING)
+  payerId           String
+  payer             User              @relation("PayerTransactions", fields: [payerId], references: [id])
+  payeeId           String
+  payee             User              @relation("PayeeTransactions", fields: [payeeId], references: [id])
+  createdAt         DateTime          @default(now())
+}

@@ -2,26 +2,75 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+/* ─── Global base styles ─────────────────────────────────────────────────── */
+@layer base {
+  /* Smooth scrolling on mobile */
+  html {
+    -webkit-tap-highlight-color: transparent;
+    scroll-behavior: smooth;
+  }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  body {
+    @apply bg-white text-text-primary antialiased;
+    /* Prevent horizontal scroll on mobile */
+    overflow-x: hidden;
+  }
+
+  /* All buttons and interactive elements get a minimum touch target of 48px
+     so fingers can tap them reliably on cheap phone screens */
+  button,
+  a,
+  [role="button"] {
+    min-height: 48px;
+  }
+
+  /* Remove default input browser styling */
+  input,
+  textarea,
+  select {
+    @apply outline-none;
   }
 }
 
-body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+/* ─── Reusable component classes ─────────────────────────────────────────── */
+@layer components {
+  /* Page container: max width centered, padded for mobile, space for bottom nav */
+  .page-container {
+    @apply max-w-lg mx-auto px-4 pb-24;
+  }
+
+  /* Standard card */
+  .card {
+    @apply bg-white rounded-2xl shadow-sm border border-gray-100 p-4;
+  }
+
+  /* Verification badges shown on worker cards */
+  .badge-basic {
+    @apply inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5
+           bg-blue-50 text-primary rounded-full;
+  }
+  .badge-certified {
+    @apply inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5
+           bg-indigo-50 text-indigo-700 rounded-full;
+  }
+  .badge-top-rated {
+    @apply inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5
+           bg-yellow-50 text-warning rounded-full;
+  }
+
+  /* Loading spinner */
+  .spinner {
+    @apply animate-spin rounded-full border-2 border-gray-200 border-t-primary;
+  }
 }
 
+/* ─── Custom utilities ───────────────────────────────────────────────────── */
 @layer utilities {
-  .text-balance {
-    text-wrap: balance;
+  /* Safe area padding for phones with notches (iPhone X, etc.) */
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .pt-safe {
+    padding-top: env(safe-area-inset-top, 0px);
   }
 }
