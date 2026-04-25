@@ -8,6 +8,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { StatusBadge } from "@/components/StatusBadge";
 import { VerificationBadge } from "@/components/VerificationBadge";
@@ -55,8 +56,10 @@ interface Booking {
   commissionAmount: number;
   escrowStatus: string;
   paymentReference: string | null;
+  clientConfirmed: boolean;
   worker: { id: string; name: string; profilePhotoUrl?: string };
   quote: { paymentStructure: string; milestones: Milestone[] };
+  reviews: { id: string; reviewerId: string; rating: number; comment?: string }[];
 }
 
 interface Job {
@@ -256,11 +259,19 @@ export default function ClientJobDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const { showToast } = useToast();
+  const { data: session } = useSession();
 
   const [job, setJob] = useState<Job | null>(null);
   const [loading, setLoading] = useState(true);
   const [accepting, setAccepting] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [reviewRating, setReviewRating] = useState(0);
+  const [reviewComment, setReviewComment] = useState("");
+  const [submittingReview, setSubmittingReview] = useState(false);
+  const [showDisputeForm, setShowDisputeForm] = useState(false);
+  const [disputeReason, setDisputeReason] = useState("");
+  const [submittingDispute, setSubmittingDispute] = useState(false);
 
   const fetchJob = useCallback(async () => {
     try {
@@ -322,6 +333,63 @@ export default function ClientJobDetailPage() {
     setCancelling(false);
   }
 
+  async function confirmJob(bookingId: string) {
+    if (!confirm("Confirm this job is complete? This will release payment to the worker.")) return;
+    setConfirming(true);
+    const res = await fetch(`/api/bookings/${bookingId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "confirm" }),
+    });
+    if (res.ok) {
+      showToast({ type: "success", message: "Job confirmed! Payment released to worker." });
+      fetchJob();
+    } else {
+      const json = await res.json();
+      showToast({ type: "error", message: json.error ?? "Failed to confirm" });
+    }
+    setConfirming(false);
+  }
+
+  async function submitDispute(bookingId: string) {
+    if (disputeReason.length < 10) return;
+    setSubmittingDispute(true);
+    const res = await fetch("/api/disputes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bookingId, reason: disputeReason }),
+    });
+    if (res.ok) {
+      showToast({ type: "success", message: "Dispute raised — our team will review it within 24 hours." });
+      setShowDisputeForm(false);
+      fetchJob();
+    } else {
+      const json = await res.json();
+      showToast({ type: "error", message: json.error ?? "Failed to raise dispute" });
+    }
+    setSubmittingDispute(false);
+  }
+
+  async function submitReview(bookingId: string) {
+    if (reviewRating === 0) return;
+    setSubmittingReview(true);
+    const res = await fetch("/api/reviews", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bookingId, rating: reviewRating, comment: reviewComment }),
+    });
+    if (res.ok) {
+      showToast({ type: "success", message: "Review submitted! Thank you." });
+      setReviewRating(0);
+      setReviewComment("");
+      fetchJob();
+    } else {
+      const json = await res.json();
+      showToast({ type: "error", message: json.error ?? "Failed to submit review" });
+    }
+    setSubmittingReview(false);
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -336,6 +404,8 @@ export default function ClientJobDetailPage() {
   const booking = job.bookings[0];
   const pendingQuotes = job.quotes.filter((q) => q.status === "PENDING");
   const canCancel = ["POSTED", "QUOTING"].includes(job.status);
+  const myId = session?.user?.id;
+  const hasReviewed = booking?.reviews?.some((r) => r.reviewerId === myId) ?? false;
 
   return (
     <div className="bg-white min-h-screen pb-28">
@@ -398,6 +468,122 @@ export default function ClientJobDetailPage() {
               >
                 💳 Pay Now — GHS {booking.totalAmount.toLocaleString()}
               </Link>
+            )}
+
+            {/* Confirm job complete (only for COMPLETED jobs not yet confirmed) */}
+            {job.status === "COMPLETED" && !booking.clientConfirmed && (
+              <div className="mt-3 bg-blue-50 border border-blue-200 rounded-xl p-4">
+                <p className="text-sm font-semibold text-blue-900 mb-1">Is the job done?</p>
+                <p className="text-xs text-blue-700 mb-3">
+                  Confirming releases payment to {booking.worker.name}. Only confirm
+                  once you&apos;re satisfied with the work.
+                </p>
+                <Button
+                  fullWidth
+                  loading={confirming}
+                  onClick={() => confirmJob(booking.id)}
+                >
+                  Confirm Job Complete
+                </Button>
+              </div>
+            )}
+
+            {/* Review form (shown after confirmed, before review submitted) */}
+            {job.status === "COMPLETED" && booking.clientConfirmed && !hasReviewed && (
+              <div className="mt-3 border border-gray-200 rounded-xl p-4">
+                <p className="text-sm font-semibold text-text-primary mb-3">
+                  Rate {booking.worker.name}
+                </p>
+                {/* Star picker */}
+                <div className="flex gap-1 mb-3">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      key={star}
+                      type="button"
+                      onClick={() => setReviewRating(star)}
+                      className="text-2xl leading-none"
+                      aria-label={`${star} stars`}
+                    >
+                      {star <= reviewRating ? "⭐" : "☆"}
+                    </button>
+                  ))}
+                </div>
+                <textarea
+                  rows={3}
+                  placeholder="What did you think? (optional)"
+                  value={reviewComment}
+                  onChange={(e) => setReviewComment(e.target.value)}
+                  className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-primary/30 mb-3"
+                />
+                <Button
+                  fullWidth
+                  disabled={reviewRating === 0}
+                  loading={submittingReview}
+                  onClick={() => submitReview(booking.id)}
+                >
+                  Submit Review
+                </Button>
+              </div>
+            )}
+
+            {/* Already reviewed */}
+            {job.status === "COMPLETED" && booking.clientConfirmed && hasReviewed && (
+              <div className="mt-3 text-center py-3">
+                <p className="text-sm text-green-700 font-medium">⭐ Review submitted</p>
+              </div>
+            )}
+
+            {/* Raise Dispute (only if COMPLETED + not yet confirmed) */}
+            {job.status === "COMPLETED" && !booking.clientConfirmed && (
+              <div className="mt-2">
+                {!showDisputeForm ? (
+                  <button
+                    onClick={() => setShowDisputeForm(true)}
+                    className="w-full text-xs text-error py-2 underline"
+                  >
+                    Something wrong? Raise a dispute
+                  </button>
+                ) : (
+                  <div className="border border-red-200 bg-red-50/30 rounded-xl p-4 mt-2">
+                    <p className="text-sm font-semibold text-red-800 mb-2">Raise a Dispute</p>
+                    <p className="text-xs text-red-700 mb-3">
+                      Describe the issue. Our team reviews disputes within 24 hours
+                      and will contact both parties.
+                    </p>
+                    <textarea
+                      rows={3}
+                      placeholder="What went wrong? Be specific…"
+                      value={disputeReason}
+                      onChange={(e) => setDisputeReason(e.target.value)}
+                      className="w-full px-3 py-2.5 text-sm border border-red-200 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-red-300/50 mb-3 bg-white"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setShowDisputeForm(false)}
+                        className="flex-1 py-2 text-sm border border-gray-200 rounded-xl text-gray-600 hover:bg-gray-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        disabled={disputeReason.length < 10 || submittingDispute}
+                        onClick={() => submitDispute(booking.id)}
+                        className="flex-1 py-2 text-sm bg-error text-white font-semibold rounded-xl disabled:opacity-40"
+                      >
+                        {submittingDispute ? "Submitting…" : "Submit Dispute"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Disputed state */}
+            {job.status === "DISPUTED" && (
+              <div className="mt-3 bg-red-50 border border-red-200 rounded-xl p-3">
+                <p className="text-xs text-red-800 font-medium">
+                  ⚠️ Dispute in review — our team will resolve this within 24 hours.
+                </p>
+              </div>
             )}
           </div>
         )}

@@ -198,13 +198,19 @@ export default function WorkerJobDetailPage() {
               </div>
             )}
 
-            {/* Payment stub notice */}
-            <div className="mt-3 bg-yellow-50 border border-yellow-200 rounded-xl p-3">
-              <p className="text-xs text-yellow-800">
-                💳 MoMo payment integration coming in Phase 4. Your earnings will be
-                transferred after the job is confirmed complete.
-              </p>
-            </div>
+            {booking.escrowStatus === "RELEASED" ? (
+              <div className="mt-3 bg-green-50 border border-green-200 rounded-xl p-3">
+                <p className="text-xs text-green-800 font-medium">
+                  ✅ Payment released — your earnings have been confirmed.
+                </p>
+              </div>
+            ) : (
+              <div className="mt-3 bg-blue-50 border border-blue-100 rounded-xl p-3">
+                <p className="text-xs text-blue-800">
+                  🔒 Funds held in escrow — released once the client confirms the job is complete.
+                </p>
+              </div>
+            )}
           </div>
         )}
 
@@ -269,9 +275,6 @@ export default function WorkerJobDetailPage() {
                 </div>
               ))}
             </div>
-            <p className="text-xs text-text-secondary mt-2">
-              Full milestone management (mark each stage complete, upload proof photos) coming in Phase 5.
-            </p>
           </div>
         )}
 

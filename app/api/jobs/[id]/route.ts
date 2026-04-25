@@ -60,6 +60,9 @@ export async function GET(
           quote: {
             include: { milestones: { orderBy: { orderIndex: "asc" } } },
           },
+          reviews: {
+            select: { id: true, reviewerId: true, rating: true, comment: true },
+          },
         },
         take: 1,
       },

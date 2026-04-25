@@ -1,15 +1,14 @@
 // app/api/users/me/route.ts
-// Returns the currently logged-in user's full profile from the database.
-// Useful when you need more detail than what's stored in the session token
-// (e.g., worker profile, location, profile photo URL).
+// GET   /api/users/me → Full profile of the logged-in user.
+// PATCH /api/users/me → Update name, profile photo URL, or location.
 
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { z } from "zod";
 
 export async function GET() {
-  // getServerSession reads the JWT cookie and returns the decoded session
   const session = await getServerSession(authOptions);
 
   if (!session?.user?.id) {
@@ -29,4 +28,36 @@ export async function GET() {
   }
 
   return NextResponse.json(user);
+}
+
+const patchSchema = z.object({
+  name: z.string().min(2).max(100).optional(),
+  profilePhotoUrl: z.string().url().optional().or(z.literal("")),
+  locationDescription: z.string().max(200).optional(),
+});
+
+export async function PATCH(req: NextRequest) {
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const body = await req.json();
+  const parsed = patchSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
+  }
+
+  const { name, profilePhotoUrl, locationDescription } = parsed.data;
+
+  const updated = await prisma.user.update({
+    where: { id: session.user.id },
+    data: {
+      ...(name ? { name } : {}),
+      ...(profilePhotoUrl !== undefined ? { profilePhotoUrl: profilePhotoUrl || null } : {}),
+      ...(locationDescription !== undefined ? { locationDescription } : {}),
+    },
+  });
+
+  return NextResponse.json(updated);
 }
